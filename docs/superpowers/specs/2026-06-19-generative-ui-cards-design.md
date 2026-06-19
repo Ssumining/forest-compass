@@ -106,8 +106,10 @@ event: done
 
 - `lib/apiContract.js` — `AGENT_EVENTS.card`, `CARD_TYPES`, `makeCard`
 - `lib/agentReply.js` — `mockAgentReply()` 반환에 `cards: []` 추가.
-  bypass/kpi는 `slope.js`(`buildBypassProposals`·`computeStats` + `makeMockTerrain`)로 실제 계산,
-  citation은 도메인 콘텐츠 기반 정적 스냅샷
+  - kpi: `computeStats(500, 25, true, makeMockTerrain())` 결과를 `items`로 변환
+  - bypass: 제안이 존재하도록 **대표 부적합 설정**(예: `slopeLimit 22`)으로
+    `buildBypassProposals(500, 22, true, makeMockTerrain())` 계산
+  - citation: 도메인 콘텐츠(산지관리법 §20 등) 기반 정적 스냅샷
 - `app/api/agent/route.js` — 답변 토큰 뒤 `cards` 순회하며 `event: card` 송출
 - `lib/streamAgent.js` — `onCard` 콜백 추가 (`event === 'card'`)
 - `components/chat/ChatPane.jsx` — 메시지 모델에 `cards: []`.
