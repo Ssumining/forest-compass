@@ -66,28 +66,28 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
     setInput('');
     setPending(true);
 
-    // 답변 토큰을 빈 버블에 실시간 누적 (첫 토큰 도착 시 버블 생성)
+    // 답변 토큰/카드를 한 버블에 실시간 누적 (첫 이벤트 도착 시 버블 생성).
+    // agentId 할당은 setMessages 업데이터 밖에서(부수효과 없는 순수 업데이터) — StrictMode 이중호출/레이스 방지.
     let agentId = null;
+    const ensureId = () => (agentId ??= Date.now() + 1);
     const upsert = (delta) => {
       setPending(false);
-      setMessages(m => {
-        if (agentId == null) {
-          agentId = Date.now() + 1;
-          return [...m, { id: agentId, role: 'agent', text: delta, time: nowLabel() }];
-        }
-        return m.map(x => (x.id === agentId ? { ...x, text: x.text + delta } : x));
-      });
+      const id = ensureId();
+      setMessages(m =>
+        m.some(x => x.id === id)
+          ? m.map(x => (x.id === id ? { ...x, text: x.text + delta } : x))
+          : [...m, { id, role: 'agent', text: delta, time: nowLabel() }],
+      );
     };
 
     const addCard = (card) => {
       setPending(false);
-      setMessages(m => {
-        if (agentId == null) {
-          agentId = Date.now() + 1;
-          return [...m, { id: agentId, role: 'agent', text: '', cards: [card], time: nowLabel() }];
-        }
-        return m.map(x => (x.id === agentId ? { ...x, cards: [...(x.cards ?? []), card] } : x));
-      });
+      const id = ensureId();
+      setMessages(m =>
+        m.some(x => x.id === id)
+          ? m.map(x => (x.id === id ? { ...x, cards: [...(x.cards ?? []), card] } : x))
+          : [...m, { id, role: 'agent', text: '', cards: [card], time: nowLabel() }],
+      );
     };
 
     try {

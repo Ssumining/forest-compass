@@ -30,7 +30,8 @@ export default function BypassChatCard({ data, onShowMap }) {
       )}
       <button
         onClick={onShowMap}
-        className="mt-2 inline-flex items-center gap-1 rounded-md bg-wblue-500 hover:bg-wblue-600 text-white px-2.5 py-1.5 text-[11px] font-semibold focus-ring transition"
+        disabled={!onShowMap}
+        className="mt-2 inline-flex items-center gap-1 rounded-md bg-wblue-500 hover:bg-wblue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-2.5 py-1.5 text-[11px] font-semibold focus-ring transition"
       >
         <I.Map size={12} /> 지도에서 적용 <I.ChevRight size={12} />
       </button>
