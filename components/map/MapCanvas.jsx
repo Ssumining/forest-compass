@@ -1,6 +1,6 @@
 'use client';
 import 'leaflet/dist/leaflet.css';
-import { Component, useState } from 'react';
+import { Component, useCallback, useState } from 'react';
 import dynamic from 'next/dynamic';
 import MapView from './MapView';
 
@@ -18,6 +18,10 @@ export default function MapCanvas(props) {
   const [offline, setOffline] = useState(false);
   const [ready, setReady] = useState(false);
 
+  // 안정 콜백 — LeafletMapView의 타임아웃 가드 useEffect가 재렌더마다 리셋되지 않도록.
+  const handleReady = useCallback(() => setReady(true), []);
+  const handleOffline = useCallback(() => setOffline(true), []);
+
   // 타일 실패/타임아웃 → 영구 SVG 폴백.
   if (offline) return <MapView {...props} />;
 
@@ -26,7 +30,7 @@ export default function MapCanvas(props) {
       {/* 첫 타일 로드 전까지 SVG를 뒤에 깔아 빈 화면 방지 */}
       {!ready && <MapView {...props} />}
       <MapErrorBoundary fallback={<MapView {...props} />}>
-        <LeafletMapView {...props} onReady={() => setReady(true)} onOffline={() => setOffline(true)} />
+        <LeafletMapView {...props} onReady={handleReady} onOffline={handleOffline} />
       </MapErrorBoundary>
     </div>
   );
