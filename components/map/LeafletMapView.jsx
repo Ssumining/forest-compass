@@ -58,7 +58,7 @@ export default function LeafletMapView({ radius, slopeLimit, terrain = makeMockT
           url={IMAGERY_URL}
           attribution="Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics"
           eventHandlers={{
-            load: () => { loadedRef.current = true; onReady?.(); },
+            load: () => { loadedRef.current = true; errCount.current = 0; onReady?.(); },
             tileerror: () => { if (++errCount.current > 8) onOffline?.(); },
           }}
         />
