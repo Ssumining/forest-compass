@@ -2,7 +2,8 @@
 import { useState, useMemo } from 'react';
 import { I } from '@/components/ui/Icons';
 import { computeStats, makeMockTerrain } from '@/lib/slope';
-import MapView, { MapLegend } from './MapView';
+import { MapLegend } from './MapView';
+import MapCanvas from './MapCanvas';
 import BypassCard from './BypassCard';
 
 function Slider({ label, sub, value, min, max, step, unit, onChange, marks, accent = '#3366FF', subColor }) {
@@ -128,7 +129,7 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
         {/* Map */}
         <div className="relative mx-3 mt-3 rounded-xl overflow-hidden border border-wline bg-white shadow-card">
           <div className="relative aspect-[3/2] sm:aspect-[16/9] lg:aspect-[3/2] xl:aspect-[5/3]">
-            <MapView
+            <MapCanvas
               radius={radius} slopeLimit={slopeLimit}
               hover={hover} setHover={setHover}
               avgSlope={avgSlope} maxSlopeInRadius={maxSlopeInRadius}
