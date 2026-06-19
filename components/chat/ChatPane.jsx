@@ -44,6 +44,7 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
   const [active, setActive] = useState(true);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]); // 후속 턴
+  const [expandedThoughts, setExpandedThoughts] = useState({}); // 후속 턴 thought 블록 접힘 상태(msg.id별)
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const scrollRef = useRef(null);
@@ -66,40 +67,47 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
     setInput('');
     setPending(true);
 
-    // 답변 토큰/카드를 한 버블에 실시간 누적 (첫 이벤트 도착 시 버블 생성).
+    // thought(추론 단계)/답변 토큰/카드를 한 버블에 실시간 누적 (첫 이벤트 도착 시 버블 생성).
     // agentId 할당은 setMessages 업데이터 밖에서(부수효과 없는 순수 업데이터) — StrictMode 이중호출/레이스 방지.
     let agentId = null;
     const ensureId = () => (agentId ??= Date.now() + 1);
-    const upsert = (delta) => {
+    // 해당 버블이 없으면 생성, 있으면 patch 적용 (text/cards/thoughts 공통 upsert)
+    const patch = (fn) => {
       setPending(false);
       const id = ensureId();
       setMessages(m =>
         m.some(x => x.id === id)
-          ? m.map(x => (x.id === id ? { ...x, text: x.text + delta } : x))
-          : [...m, { id, role: 'agent', text: delta, time: nowLabel() }],
+          ? m.map(x => (x.id === id ? fn(x) : x))
+          : [...m, fn({ id, role: 'agent', text: '', cards: [], thoughts: [], thoughtActive: true, time: nowLabel() })],
       );
     };
 
-    const addCard = (card) => {
-      setPending(false);
-      const id = ensureId();
-      setMessages(m =>
-        m.some(x => x.id === id)
-          ? m.map(x => (x.id === id ? { ...x, cards: [...(x.cards ?? []), card] } : x))
-          : [...m, { id, role: 'agent', text: '', cards: [card], time: nowLabel() }],
-      );
-    };
+    const upsert = (delta) => patch(x => ({ ...x, text: x.text + delta }));
+    const addCard = (card) => patch(x => ({ ...x, cards: [...(x.cards ?? []), card] }));
+    // thought 이벤트는 도구 1건당 active→done 두 번 도착 → tool 키로 같은 단계를 갱신.
+    const addThought = (step) => patch(x => {
+      const steps = x.thoughts ?? [];
+      const i = steps.findIndex(s => s.tool === step.tool);
+      return { ...x, thoughts: i >= 0 ? steps.map((s, j) => (j === i ? { ...s, ...step } : s)) : [...steps, step] };
+    });
 
     try {
       await streamAgent(
         { query: text, personaId: persona?.id, parcelId: PARCEL_ID },
-        { onAnswer: upsert, onCard: addCard },
+        { onThought: addThought, onAnswer: upsert, onCard: addCard },
       );
       if (agentId == null) throw new Error('empty stream');
+      // 스트림 종료 → 추론 루프 완료 표시(헤더가 "추론 루프 완료"로 전환, 미조작 시 자동 접힘)
+      const id = agentId;
+      setMessages(m => m.map(x => (x.id === id ? { ...x, thoughtActive: false } : x)));
     } catch {
       // 네트워크/스트림 실패 → 로컬 mock 폴백
-      const { answer, cards } = mockAgentReply(text, persona?.id);
-      setMessages(m => [...m, { id: Date.now() + 1, role: 'agent', text: answer, cards, time: nowLabel() }]);
+      const { answer, thoughts, cards } = mockAgentReply(text, persona?.id);
+      setMessages(m => [...m, {
+        id: Date.now() + 1, role: 'agent', text: answer, cards,
+        thoughts: (thoughts ?? []).map(t => ({ ...t, state: 'done' })), thoughtActive: false,
+        time: nowLabel(),
+      }]);
     } finally {
       setPending(false);
     }
@@ -215,14 +223,22 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
             <div className="h-7 w-7 shrink-0 rounded-full bg-wink text-white grid place-items-center shadow-sm">
               <I.Sparkles size={13} />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 space-y-2">
+              {msg.thoughts?.length > 0 && (
+                <ThoughtBlock
+                  steps={msg.thoughts}
+                  expanded={expandedThoughts[msg.id] ?? msg.thoughtActive}
+                  onToggle={() => setExpandedThoughts(e => ({ ...e, [msg.id]: !(e[msg.id] ?? msg.thoughtActive) }))}
+                  active={msg.thoughtActive}
+                />
+              )}
               {msg.text && (
                 <div className="rounded-2xl rounded-tl-md border border-wline bg-white p-3.5 shadow-card slide-up ai-prose">
                   {msg.text}
                 </div>
               )}
               {msg.cards?.length > 0 && <CardRenderer cards={msg.cards} onShowMap={onShowMap} />}
-              <div className="text-[10.5px] text-wsub mt-1 pl-1">{msg.time}</div>
+              <div className="text-[10.5px] text-wsub pl-1">{msg.time}</div>
             </div>
           </div>
         ))}

@@ -1,8 +1,18 @@
 'use client';
 import { I } from '@/components/ui/Icons';
 
+// 후속 턴의 thought 이벤트는 도구 이름만 오고 아이콘 컴포넌트가 없다 → 도구명으로 아이콘 추정.
+function stepIcon(step) {
+  if (step.icon) return step.icon;
+  const t = step.tool || '';
+  if (/slope|grid|gis|terrain|경사/i.test(t)) return I.Mountain;
+  if (/verify|origin|pinedamage|image|cam|영상/i.test(t)) return I.Camera;
+  if (/search|knowledge|know|rag|law|법/i.test(t)) return I.Search;
+  return I.Activity;
+}
+
 function ThoughtStep({ step, idx, total }) {
-  const Icon = step.icon;
+  const Icon = stepIcon(step);
   const isLast = idx === total - 1;
   return (
     <div className="relative pl-7">
@@ -45,6 +55,7 @@ function ThoughtStep({ step, idx, total }) {
 
 export default function ThoughtBlock({ steps, expanded, onToggle, active }) {
   const doneCount = steps.filter(s => s.state === 'done').length;
+  const totalMs = steps.reduce((a, b) => a + (b.ms || 0), 0);
   return (
     <div className="rounded-xl border border-wline bg-white">
       <button
@@ -65,7 +76,7 @@ export default function ThoughtBlock({ steps, expanded, onToggle, active }) {
             <div className="text-[11.5px] text-wsub mt-0.5">
               {active
                 ? <><span className="thought-dot" /><span className="thought-dot" /><span className="thought-dot" /> 도구 호출 및 데이터 검증 중</>
-                : `총 ${steps.reduce((a, b) => a + (b.ms || 0), 0)}ms · MCP 도구 3개 호출됨`
+                : `${totalMs > 0 ? `총 ${totalMs}ms · ` : ''}MCP 도구 ${steps.length}개 호출됨`
               }
             </div>
           </div>
