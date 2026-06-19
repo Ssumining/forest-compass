@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, SVGOverlay, Polygon, Circle, CircleMarker, useMapEvents } from 'react-leaflet';
 import { slopeColor, makeMockTerrain } from '@/lib/slope';
 import { pxToLatLng, latLngToPx, pxRadiusToMeters, DEFAULT_BOUNDS, PX_W, PX_H } from '@/lib/geoProject';
@@ -46,6 +46,23 @@ export default function LeafletMapView({ radius, slopeLimit, terrain = makeMockT
   const centerLatLng = pxToLatLng(parcelCenter, bounds);
   const radiusMeters = pxRadiusToMeters(radiusToPx(radius), bounds);
 
+  // 경사 히트맵은 슬라이더와 무관(terrain 고정) → memoize해서 슬라이더 조작 시 2400셀 재구성 회피.
+  const heatmap = useMemo(
+    () => grid.map((cell) => (
+      <rect key={`s-${cell.c}-${cell.r}`} x={cell.c * cw} y={cell.r * ch}
+        width={cw + 0.4} height={ch + 0.4} fill={slopeColor(cell.slope)} />
+    )),
+    [grid, cw, ch],
+  );
+  // 제한구역은 slopeLimit에만 의존 → 그 값이 바뀔 때만 재구성.
+  const restricted = useMemo(
+    () => grid.map((cell) => cell.slope <= slopeLimit ? null : (
+      <rect key={`r-${cell.c}-${cell.r}`} x={cell.c * cw} y={cell.r * ch}
+        width={cw + 0.4} height={ch + 0.4} fill="rgba(255,51,75,0.40)" />
+    )),
+    [grid, cw, ch, slopeLimit],
+  );
+
   return (
     <div className="absolute inset-0 isolate">
       <MapContainer
@@ -66,18 +83,8 @@ export default function LeafletMapView({ radius, slopeLimit, terrain = makeMockT
 
         {/* 경사 히트맵 + 제한구역 — 600×400 SVG를 bounds에 정렬 */}
         <SVGOverlay bounds={bounds} attributes={{ viewBox: `0 0 ${PX_W} ${PX_H}`, preserveAspectRatio: 'none' }}>
-          <g opacity={0.55}>
-            {grid.map((cell) => (
-              <rect key={`s-${cell.c}-${cell.r}`} x={cell.c * cw} y={cell.r * ch}
-                width={cw + 0.4} height={ch + 0.4} fill={slopeColor(cell.slope)} />
-            ))}
-          </g>
-          <g>
-            {grid.map((cell) => cell.slope <= slopeLimit ? null : (
-              <rect key={`r-${cell.c}-${cell.r}`} x={cell.c * cw} y={cell.r * ch}
-                width={cw + 0.4} height={ch + 0.4} fill="rgba(255,51,75,0.40)" />
-            ))}
-          </g>
+          <g opacity={0.55}>{heatmap}</g>
+          <g>{restricted}</g>
         </SVGOverlay>
 
         {/* 대상 필지 */}

@@ -25,6 +25,9 @@ export async function GET(request) {
         body: JSON.stringify({ parcelId }),
       });
       if (upstream.ok) {
+        // ★ 백엔드 /geo/analyze 의 terrain JSON이 여기로 들어온다.
+        //   형태는 apiContract.js의 GEO_TERRAIN_KEYS (grid·cols·rows·parcelPolygon·
+        //   parcelCenter·bounds·deadTrees·consts). 키만 맞으면 프론트가 그대로 렌더.
         const data = await upstream.json();
         if (validateTerrain(data).length === 0) {
           return Response.json({ ...data, source: 'backend' });
