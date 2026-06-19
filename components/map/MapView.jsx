@@ -2,6 +2,7 @@
 import { useMemo } from 'react';
 import { I } from '@/components/ui/Icons';
 import { slopeColor, makeMockTerrain } from '@/lib/slope';
+import { latLngToPx, DEFAULT_BOUNDS } from '@/lib/geoProject';
 
 const W = 600, H = 400;
 
@@ -111,11 +112,12 @@ export default function MapView({ radius, slopeLimit, hover, setHover, avgSlope,
         <text x={parcelCenter[0] + radiusPx + 6} y={parcelCenter[1] - 4} fontSize="10" fill="#274FCF" fontWeight="700">r = {radius}m</text>
       </g>
 
-      {/* Dead tree markers */}
+      {/* Dead tree markers — terrain.deadTrees={lat,lng,pine,conf} 를 픽셀로 역투영 */}
       <g>
-        {(terrain.deadTrees ?? []).map(([x, y], i) => (
-          <circle key={i} cx={x} cy={y} r="3.4" fill="#FF334B" stroke="#fff" strokeWidth="1" />
-        ))}
+        {(terrain.deadTrees ?? []).map((d, i) => {
+          const [x, y] = latLngToPx([d.lat, d.lng], terrain.bounds ?? DEFAULT_BOUNDS);
+          return <circle key={i} cx={x} cy={y} r="3.4" fill={d.pine ? '#FF334B' : '#F59E0B'} stroke="#fff" strokeWidth="1" />;
+        })}
       </g>
 
       {/* Hover crosshair */}
