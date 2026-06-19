@@ -54,11 +54,12 @@ export default function LeafletMapView({ radius, slopeLimit, terrain = makeMockT
     )),
     [grid, cw, ch],
   );
-  // 제한구역은 slopeLimit에만 의존 → 그 값이 바뀔 때만 재구성.
+  // 제한구역(위험 사면)은 slopeLimit에만 의존 → 그 값이 바뀔 때만 재구성.
+  // 명세 3.3 "붉은색 반투명 빗금" → 빗금 패턴(leaflet-restricted-stripe) 사용.
   const restricted = useMemo(
     () => grid.map((cell) => cell.slope <= slopeLimit ? null : (
       <rect key={`r-${cell.c}-${cell.r}`} x={cell.c * cw} y={cell.r * ch}
-        width={cw + 0.4} height={ch + 0.4} fill="rgba(255,51,75,0.40)" />
+        width={cw + 0.4} height={ch + 0.4} fill="url(#leaflet-restricted-stripe)" />
     )),
     [grid, cw, ch, slopeLimit],
   );
@@ -83,6 +84,12 @@ export default function LeafletMapView({ radius, slopeLimit, terrain = makeMockT
 
         {/* 경사 히트맵 + 제한구역 — 600×400 SVG를 bounds에 정렬 */}
         <SVGOverlay bounds={bounds} attributes={{ viewBox: `0 0 ${PX_W} ${PX_H}`, preserveAspectRatio: 'none' }}>
+          <defs>
+            <pattern id="leaflet-restricted-stripe" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+              <rect width="6" height="6" fill="rgba(255,51,75,0.18)" />
+              <line x1="0" y1="0" x2="0" y2="6" stroke="#FF334B" strokeWidth="1.4" opacity="0.7" />
+            </pattern>
+          </defs>
           <g opacity={0.55}>{heatmap}</g>
           <g>{restricted}</g>
         </SVGOverlay>
