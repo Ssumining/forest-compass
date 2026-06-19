@@ -2,7 +2,8 @@
 import { useState, useMemo } from 'react';
 import { I } from '@/components/ui/Icons';
 import { computeStats, makeMockTerrain } from '@/lib/slope';
-import MapView, { MapLegend } from './MapView';
+import { MapLegend } from './MapView';
+import MapCanvas from './MapCanvas';
 import BypassCard from './BypassCard';
 
 function Slider({ label, sub, value, min, max, step, unit, onChange, marks, accent = '#3366FF', subColor }) {
@@ -128,7 +129,7 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
         {/* Map */}
         <div className="relative mx-3 mt-3 rounded-xl overflow-hidden border border-wline bg-white shadow-card">
           <div className="relative aspect-[3/2] sm:aspect-[16/9] lg:aspect-[3/2] xl:aspect-[5/3]">
-            <MapView
+            <MapCanvas
               radius={radius} slopeLimit={slopeLimit}
               hover={hover} setHover={setHover}
               avgSlope={avgSlope} maxSlopeInRadius={maxSlopeInRadius}
@@ -142,7 +143,7 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
               </div>
             </div>
             <div className="absolute inset-x-3 bottom-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-white/95 backdrop-blur border border-wline px-3 py-1.5 text-[10.5px] text-wsub shadow-card">
-              <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-wred" />고사목 7주</span>
+              <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-wred" />고사목 {terrain.deadTrees?.length ?? 0}주</span>
               <span className="flex items-center gap-1"><I.Mountain size={11} /> 평균 {avgSlope.toFixed(1)}°</span>
               <span className="flex items-center gap-1"><I.Compass size={11} /> 최대 {maxSlopeInRadius.toFixed(1)}°</span>
               <span className="ml-auto font-mono text-wink/70">EPSG:5179 · GRS80</span>
