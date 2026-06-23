@@ -8,6 +8,8 @@
 //   4) 없으면 → 데모 폴백: 채워진 신고서 텍스트(.txt)를 즉시 생성해 반환
 //      (백엔드 연동 전에도 다운로드 버튼이 끝까지 동작하도록)
 
+import { resolveBackendUrl } from '@/lib/backendUrl';
+
 const REQUIRED = ['formCode', 'declarationType', 'applicant', 'siteDetails', 'purpose'];
 
 function validate(p) {
@@ -82,31 +84,29 @@ export async function POST(request) {
   }
 
   const reportId = makeReportId(payload);
-  const backend = process.env.REPORT_BACKEND_URL;
+  const backend = resolveBackendUrl('REPORT_BACKEND_URL');
 
-  // 1) 실제 백엔드 연동된 경우 → 프록시 후 파일 스트리밍
-  if (backend) {
-    try {
-      const upstream = await fetch(`${backend.replace(/\/$/, '')}/report/forest-temp-use`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, reportId }),
-      });
-      if (!upstream.ok) {
-        return Response.json({ error: 'BACKEND_ERROR', status: upstream.status }, { status: 502 });
-      }
+  // 1) 백엔드(PDF 생성) 우선 시도 → 성공 시 PDF 스트리밍
+  try {
+    const upstream = await fetch(`${backend}/report/forest-temp-use`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, reportId }),
+    });
+    if (upstream.ok) {
       const headers = new Headers();
-      headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'application/octet-stream');
+      headers.set('Content-Type', upstream.headers.get('Content-Type') ?? 'application/pdf');
       headers.set(
         'Content-Disposition',
-        upstream.headers.get('Content-Disposition') ?? `attachment; filename="${reportId}.hwpx"`,
+        upstream.headers.get('Content-Disposition') ?? `attachment; filename="${reportId}.pdf"`,
       );
       headers.set('X-Report-Id', reportId);
       headers.set('X-Report-Mode', 'backend');
       return new Response(upstream.body, { status: 200, headers });
-    } catch {
-      return Response.json({ error: 'BACKEND_UNREACHABLE' }, { status: 502 });
     }
+    // 백엔드가 응답했지만 실패(422/500 등) → 데모 폴백으로 넘어감
+  } catch {
+    // 백엔드 미연동/연결 실패 → 데모 폴백으로 넘어감
   }
 
   // 2) 데모 폴백 → 채워진 신고서 텍스트 반환

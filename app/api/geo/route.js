@@ -2,9 +2,10 @@
 // POST /api/geo  { lat, lng, parcelAreaHa? }
 // → backend POST /geo/analyze → SRTM 실측 경사도 grid 반환
 
-const BACKEND = (process.env.BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+import { resolveBackendUrl } from '@/lib/backendUrl';
 
 export async function POST(request) {
+  const BACKEND = resolveBackendUrl('GEO_BACKEND_URL');
   try {
     const body = await request.json();
     const upstream = await fetch(`${BACKEND}/geo/analyze`, {
