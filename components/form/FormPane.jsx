@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { I } from '@/components/ui/Icons';
 import {
   makeDefaultFields, buildReportPayload, validateFields,
@@ -65,7 +65,32 @@ function SectionTitle({ n, children, note, badgeClass = 'bg-wink' }) {
 
 const fmt = (n) => Number(String(n).replace(/[^\d.-]/g, '') || 0).toLocaleString('ko-KR');
 
-export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, onClose }) {
+// 주소에서 시군구 추출 → 처리기관명 도출
+function deriveAgency(address) {
+  if (!address) return null;
+  const parts = address.trim().split(/\s+/);
+  // 시·군·구 토큰 탐색
+  const siGun = parts.find(p => /[시군구]$/.test(p) && p.length >= 2);
+  if (!siGun) return null;
+  // 군 단위 → 산림과, 시·구 → 산림녹지과
+  const dept = siGun.endsWith('군') ? '산림과' : '산림녹지과';
+  return `${siGun} ${dept}`;
+}
+
+function ProcessingAgencyCard({ address, recipient }) {
+  const agency = deriveAgency(address);
+  return agency ? (
+    <>
+      <div className="text-[13px] font-bold text-wink mt-1">{agency}</div>
+      <div className="text-[10.5px] text-wsub mt-0.5">{recipient}</div>
+      <div className="text-[10px] text-wsub/60 mt-0.5">소재지 기준 자동 도출</div>
+    </>
+  ) : (
+    <div className="text-[11.5px] text-wsub mt-2">소재지 입력 후 도출됩니다</div>
+  );
+}
+
+export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, selectedLocation, onClose }) {
   const [downloadState, setDownloadState] = useState('idle');
   const [toast, setToast] = useState(null); // { title, sub }
   const [fields, setFields] = useState(makeDefaultFields);
@@ -80,6 +105,98 @@ export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, o
 
   const setField = (key) => (val) => setFields(f => ({ ...f, [key]: val }));
   const sim = { radius, slopeLimit, avgSlope, Y, compliant };
+
+  // 지도에서 위치 선택 시 소재지·지번·지목 자동 반영
+  const prevLocRef = useRef(null);
+  useEffect(() => {
+    if (!selectedLocation?.lat) return;
+    const key = `${selectedLocation.lat},${selectedLocation.lng}`;
+    if (prevLocRef.current === key) return;
+    prevLocRef.current = key;
+
+    const addr = selectedLocation.address ?? '';
+    // 주소에서 소재지(읍면동까지)와 지번 분리
+    const parts = addr.trim().split(/\s+/);
+    const lastPart = parts[parts.length - 1] ?? '';
+    const isJibun = /^산?\d/.test(lastPart);
+    const location = isJibun ? parts.slice(0, -1).join(' ') : addr;
+    const jibun   = isJibun ? lastPart : (selectedLocation.jibun ?? '');
+
+    setFields(f => ({
+      ...f,
+      siteLocation: location || f.siteLocation,
+      siteParcel:   jibun   || f.siteParcel,
+      siteLandCategory: selectedLocation.landCategory || f.siteLandCategory,
+      ...(selectedLocation.areaSqm > 0 ? {
+        areaImupum:    selectedLocation.siteClassification?.includes('임업용') ? Math.round(selectedLocation.areaSqm) : f.areaImupum,
+        areaGongik:    selectedLocation.siteClassification?.includes('공익용') ? Math.round(selectedLocation.areaSqm) : f.areaGongik,
+        areaJunbojeon: selectedLocation.siteClassification?.includes('준보전') ? Math.round(selectedLocation.areaSqm) : f.areaJunbojeon,
+      } : {}),
+    }));
+  }, [selectedLocation]);
+
+  // ── 지번 자동조회 ──────────────────────────────────────────────────────
+  const [landLookupState, setLandLookupState] = useState('idle'); // idle | loading | done | error
+  const [landLookupMsg, setLandLookupMsg] = useState('');
+
+  async function handleLandLookup() {
+    const location = fields.siteLocation?.trim();
+    const parcel   = fields.siteParcel?.trim();
+    if (!location || !parcel) {
+      setLandLookupMsg('소재지와 지번을 모두 입력하세요.');
+      setLandLookupState('error');
+      setTimeout(() => setLandLookupState('idle'), 2500);
+      return;
+    }
+    setLandLookupState('loading');
+    setLandLookupMsg('');
+    try {
+      const res  = await fetch('/api/land-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: `${location} ${parcel}` }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message ?? `서버 오류 (${res.status})`);
+
+      const coordErr = data.error_coord ?? data.error_pnu;
+      if (coordErr) throw new Error(coordErr);
+
+      // 지목
+      if (data.landCategory) setField('siteLandCategory')(data.landCategory);
+
+      // 면적 — 산지구분 기반 배분
+      if (data.areaSqm) {
+        const area = Math.round(data.areaSqm);
+        const cls  = data.siteClassification ?? '';
+        setFields(f => ({
+          ...f,
+          areaImupum:    cls.includes('임업용') ? area : f.areaImupum,
+          areaGongik:    cls.includes('공익용') ? area : f.areaGongik,
+          areaJunbojeon: cls.includes('준보전') ? area : f.areaJunbojeon,
+          // 구분 불명 시 임업용으로 폴백
+          ...((!cls.includes('임업용') && !cls.includes('공익용') && !cls.includes('준보전'))
+            ? { areaImupum: area } : {}),
+          tempUseArea: area,
+        }));
+      }
+
+      const infoMsg = [
+        data.landCategory && `지목: ${data.landCategory}`,
+        data.areaSqm && `면적: ${Math.round(data.areaSqm).toLocaleString()}㎡`,
+        data.siteClassification && data.siteClassification !== '미분류' && data.siteClassification,
+        data.error_land_info && '(토지대장 미조회)',
+      ].filter(Boolean).join(' · ');
+
+      setLandLookupMsg(`조회 완료 · ${infoMsg}`);
+      setLandLookupState('done');
+      setTimeout(() => setLandLookupState('idle'), 4000);
+    } catch (err) {
+      setLandLookupMsg(String(err.message ?? err));
+      setLandLookupState('error');
+      setTimeout(() => setLandLookupState('idle'), 3500);
+    }
+  }
 
   const areaTotal =
     Number(fields.areaImupum || 0) + Number(fields.areaGongik || 0) + Number(fields.areaJunbojeon || 0);
@@ -159,7 +276,7 @@ export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, o
           >
             {downloadState === 'loading' && <><I.Loader size={13} className="spin-slow" /> 생성 중…</>}
             {downloadState === 'done'    && <><I.Check size={14} stroke={2.5} /> 다운로드 완료</>}
-            {downloadState === 'idle'    && <><I.Download size={13} /> PDF / HWPX 다운로드</>}
+            {downloadState === 'idle'    && <><I.Download size={13} /> PDF 다운로드</>}
           </button>
           {onClose && (
             <button onClick={onClose} className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink lg:hidden">
@@ -255,6 +372,30 @@ export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, o
               <FormField label="지목" value={fields.siteLandCategory} onChange={setField('siteLandCategory')} />
             </div>
 
+            {/* 지번 조회 버튼 */}
+            <div className="mt-2.5 flex items-center gap-2.5">
+              <button
+                onClick={handleLandLookup}
+                disabled={landLookupState === 'loading'}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11.5px] font-semibold border transition ${
+                  landLookupState === 'loading' ? 'bg-wbg text-wsub border-wline cursor-wait' :
+                  landLookupState === 'done'    ? 'bg-wgreen/10 text-wgreen border-wgreen/30' :
+                  landLookupState === 'error'   ? 'bg-wred/10 text-wred border-wred/30' :
+                                                  'bg-wblue-50 text-wblue-600 border-wblue-200 hover:bg-wblue-100'
+                }`}
+              >
+                {landLookupState === 'loading' ? <><I.Loader size={12} className="spin-slow" /> 조회 중…</> :
+                 landLookupState === 'done'    ? <><I.CheckCircle size={12} /> 조회 완료</> :
+                 landLookupState === 'error'   ? <><I.TriangleAlert size={12} /> 조회 실패</> :
+                                                 <><I.Search size={12} /> 토지정보 자동조회</>}
+              </button>
+              {landLookupMsg && (
+                <span className={`text-[10.5px] ${landLookupState === 'error' ? 'text-wred' : 'text-wsub'}`}>
+                  {landLookupMsg}
+                </span>
+              )}
+            </div>
+
             {/* 면적 표 (산지구분별) */}
             <div className="mt-3 rounded-md border border-wline overflow-hidden">
               <div className="grid grid-cols-4 bg-wbg text-[10.5px] font-semibold text-wsub">
@@ -301,28 +442,62 @@ export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, o
             )}
           </div>
 
-          {/* AI 사전검토 (첨부 자동생성) */}
+          {/* AI 사전검토 */}
           <div className="px-8 py-5 border-b border-wline bg-wbg/40">
-            <SectionTitle n="AI" badgeClass="bg-wblue-500" note="첨부 자동 생성">에이전트 사전 검토 결과</SectionTitle>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-md border border-wline bg-white p-3">
-                <div className="text-[10.5px] text-wsub font-semibold">설정 시뮬레이션</div>
-                <div className="text-[13px] font-bold text-wink mt-1 tabular-nums">r = {radius}m · θ ≤ {slopeLimit}°</div>
-                <div className="text-[10.5px] text-wsub mt-0.5">예상 재적 <span className="text-wblue-600 font-semibold tabular-nums">{Y.toLocaleString()} m³</span></div>
+            <SectionTitle n="AI" badgeClass="bg-wblue-500" note="실측 데이터 기반">에이전트 사전 검토 결과</SectionTitle>
+
+            {!selectedLocation?.lat ? (
+              <div className="rounded-md border border-dashed border-wline bg-white px-4 py-6 text-center text-[11.5px] text-wsub">
+                <I.Map size={20} className="mx-auto mb-2 text-wline" />
+                지도에서 위치를 선택하면 실측 경사도 기반 검토 결과가 표시됩니다
               </div>
-              <div className="rounded-md border border-wline bg-white p-3">
-                <div className="text-[10.5px] text-wsub font-semibold">법적 검토 (§15-2)</div>
-                <div className={`text-[13px] font-bold mt-1 ${compliant ? 'text-wgreen' : 'text-wred'}`}>
-                  {compliant ? '산지관리법 적합' : '경사 상한 초과'}
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* 카드 1: 시뮬레이션 설정 */}
+                <div className="rounded-md border border-wline bg-white p-3">
+                  <div className="text-[10.5px] text-wsub font-semibold flex items-center gap-1">
+                    <I.Sliders size={11} /> 시뮬레이션 설정
+                  </div>
+                  <div className="text-[13px] font-bold text-wink mt-1 tabular-nums">
+                    r = {radius}m · θ ≤ {slopeLimit}°
+                  </div>
+                  <div className="text-[10.5px] text-wsub mt-0.5">
+                    예상 재적{' '}
+                    <span className="text-wblue-600 font-semibold tabular-nums">{Y.toLocaleString()} m³</span>
+                  </div>
+                  {selectedLocation.areaSqm > 0 && (
+                    <div className="text-[10px] text-wsub/70 mt-0.5 tabular-nums">
+                      필지 {selectedLocation.areaSqm.toLocaleString()}㎡
+                      {selectedLocation.siteClassification && selectedLocation.siteClassification !== '미분류'
+                        ? ` · ${selectedLocation.siteClassification}` : ''}
+                    </div>
+                  )}
                 </div>
-                <div className="text-[10.5px] text-wsub mt-0.5">평균경사 {avgSlope.toFixed(1)}°</div>
+
+                {/* 카드 2: 법적 검토 */}
+                <div className={`rounded-md border bg-white p-3 ${compliant ? 'border-wgreen/30' : 'border-wred/30'}`}>
+                  <div className="text-[10.5px] text-wsub font-semibold flex items-center gap-1">
+                    <I.ShieldCheck size={11} /> 법적 검토 (§15-2)
+                  </div>
+                  <div className={`text-[13px] font-bold mt-1 ${compliant ? 'text-wgreen' : 'text-wred'}`}>
+                    {compliant ? '산지관리법 적합' : '경사 상한 초과'}
+                  </div>
+                  <div className="text-[10.5px] text-wsub mt-0.5">
+                    평균경사 <span className="font-semibold text-wink tabular-nums">{avgSlope.toFixed(1)}°</span>
+                    {' '}· 상한 {slopeLimit}°
+                  </div>
+                  <div className="text-[10px] text-wsub/70 mt-0.5">SRTM 30m 실측 경사도</div>
+                </div>
+
+                {/* 카드 3: 처리기관 — 선택 위치에서 동적 도출 */}
+                <div className="rounded-md border border-wline bg-white p-3">
+                  <div className="text-[10.5px] text-wsub font-semibold flex items-center gap-1">
+                    <I.Doc size={11} /> 처리기관
+                  </div>
+                  <ProcessingAgencyCard address={selectedLocation.address} recipient={fields.recipient} />
+                </div>
               </div>
-              <div className="rounded-md border border-wline bg-white p-3">
-                <div className="text-[10.5px] text-wsub font-semibold">처리기관 권장</div>
-                <div className="text-[13px] font-bold text-wink mt-1">남원시 산림녹지과</div>
-                <div className="text-[10.5px] text-wsub mt-0.5">담당 박○○ · 063-620-XXXX</div>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Sign block */}
@@ -331,7 +506,9 @@ export default function FormPane({ radius, slopeLimit, avgSlope, Y, compliant, o
               「산지관리법」 제15조의2제2항·제3항 및 같은 법 시행규칙 제15조의3제1항·제15조의4제2항에 따라
               위와 같이 산지일시사용 {fields.declarationType === '신규' ? '신고' : fields.declarationType === '변경' ? '변경신고' : '기간연장신고'}를 합니다.
             </div>
-            <div className="text-center text-[12px] text-wsub mb-5 tabular-nums">{fields.declaredDate}</div>
+            <div className="text-center text-[12px] text-wsub mb-5 tabular-nums">
+              {(() => { const d = new Date(); return `${d.getFullYear()}년 ${String(d.getMonth()+1).padStart(2,'0')}월 ${String(d.getDate()).padStart(2,'0')}일`; })()}
+            </div>
             <div className="flex flex-wrap items-center justify-end gap-4 text-[12px]">
               <span className="text-wsub">신고인</span>
               <span className="text-wink font-semibold tabular-nums">{fields.applicantName}</span>
