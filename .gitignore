@@ -42,3 +42,16 @@ next-env.d.ts
 
 # superpowers SDD scratch
 /.superpowers
+
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+
+# Test output PDFs
+*.pdf
+
