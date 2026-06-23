@@ -1,43 +1,26 @@
-// BFF — 지형(terrain) 1회 fetch 엔드포인트
-//
-// 흐름:
-//   1) 프론트가 GET /api/geo?parcelId=... 호출 (필지당 1회)
-//   2) GEO_BACKEND_URL 환경변수가 있으면 → 실제 GEE 백엔드(/geo/analyze)로 프록시
-//   3) 없으면 → mock terrain 반환 (백엔드 연동 전에도 지도·시뮬레이터가 끝까지 동작)
-//
-// terrain = 필지에 종속된 정적 데이터(격자·경계·KFRI 상수).
-// 슬라이더(반경/경사상한/로봇) 변화는 프론트 computeStats가 재집계 → 여기 재호출 없음.
+// BFF — 지형(terrain) fetch
+// POST /api/geo  { lat, lng, parcelAreaHa? }
+// → backend POST /geo/analyze → SRTM 실측 경사도 grid 반환
 
-import { makeMockTerrain } from '@/lib/slope';
-import { validateTerrain } from '@/lib/apiContract';
+const BACKEND = (process.env.BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '');
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const parcelId = searchParams.get('parcelId') ?? '';
-  const backend = process.env.GEO_BACKEND_URL;
-
-  // 1) 실제 백엔드 연동된 경우 → GEE 연산 결과(terrain) 프록시
-  if (backend) {
-    try {
-      const upstream = await fetch(`${backend.replace(/\/$/, '')}/geo/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parcelId }),
-      });
-      if (upstream.ok) {
-        // ★ 백엔드 /geo/analyze 의 terrain JSON이 여기로 들어온다.
-        //   형태는 apiContract.js의 GEO_TERRAIN_KEYS (grid·cols·rows·parcelPolygon·
-        //   parcelCenter·bounds·deadTrees·consts). 키만 맞으면 프론트가 그대로 렌더.
-        const data = await upstream.json();
-        if (validateTerrain(data).length === 0) {
-          return Response.json({ ...data, source: 'backend' });
-        }
-      }
-    } catch {
-      /* 백엔드 불통 → mock 폴백 */
+export async function POST(request) {
+  try {
+    const body = await request.json();
+    const upstream = await fetch(`${BACKEND}/geo/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!upstream.ok) {
+      return Response.json({ error: 'BACKEND_ERROR' }, { status: upstream.status });
     }
+    const data = await upstream.json();
+    return Response.json(data);
+  } catch (err) {
+    return Response.json(
+      { error: 'BACKEND_UNREACHABLE', message: String(err.message ?? err) },
+      { status: 503 },
+    );
   }
-
-  // 2) 데모 폴백 → mock terrain
-  return Response.json({ ...makeMockTerrain(), parcelId });
 }
