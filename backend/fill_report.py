@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from datetime import date
 from pathlib import Path
 
 TEMPLATE = Path(__file__).parent / "templates" / "forest_temp_use.hwpx"
@@ -43,18 +44,20 @@ def _kdate(iso: str) -> str:
 
 def build_token_map(p: dict) -> dict[str, str]:
     """JSON 페이로드 → {플레이스홀더 토큰: 값} (docs §3 매핑과 1:1)."""
-    a = p["applicant"]
-    lo = p.get("landowner", {})
+    a = p.get("applicant") or {}
+    lo = p.get("landowner") or {}
     owner = a if lo.get("sameAsApplicant") else lo
-    s = p["siteDetails"][0]
-    area = s.get("areaByType", {})
-    changes = p.get("changes", {})
+    s = p.get("siteDetails", [{}])[0] if p.get("siteDetails") else {}
+    area = s.get("areaByType") or {}
+    changes = p.get("changes") or {}
+    period = p.get("period") or {}
+    original_period = period.get("original") or {}
 
     t: dict[str, str] = {
         # 신고 구분 체크박스
-        "decl_new": "√" if p["declarationType"] == "신규" else " ",
-        "decl_change": "√" if p["declarationType"] == "변경" else " ",
-        "decl_extend": "√" if p["declarationType"] == "기간연장" else " ",
+        "decl_new": "√" if p.get("declarationType") == "신규" else " ",
+        "decl_change": "√" if p.get("declarationType") == "변경" else " ",
+        "decl_extend": "√" if p.get("declarationType") == "기간연장" else " ",
         # 신고인
         "applicant_name": a.get("name", ""),
         "applicant_birth": a.get("birth", ""),
@@ -76,14 +79,14 @@ def build_token_map(p: dict) -> dict[str, str]:
         "temp_use_area": _comma(s.get("tempUseAreaSqm", 0)),
         # 목적·기간
         "purpose": p.get("purpose", ""),
-        "period_start": (p.get("period", {}).get("original", {}) or {}).get("start", ""),
-        "period_end": (p.get("period", {}).get("original", {}) or {}).get("end", ""),
+        "period_start": original_period.get("start", ""),
+        "period_end": original_period.get("end", ""),
         # 변경사항
         "change_before": changes.get("before", ""),
         "change_after": changes.get("after", ""),
         "change_reason": changes.get("reason", ""),
         # 서명부
-        "declared_date": _kdate(p.get("declaredDate", "")),
+        "declared_date": _kdate(p.get("declaredDate") or date.today().isoformat()),
         "recipient": p.get("recipient", ""),
     }
     return t
@@ -93,6 +96,45 @@ def _xml_escape(v: str) -> str:
     return (
         str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
+
+
+def process_multi_parcel(xml: str, site_details: list) -> str:
+    """다필지가 있으면 XML 내 표 행(<hp:tr>)을 찾아 복제하고 각각 치환."""
+    if not site_details:
+        return xml
+
+    pattern = re.compile(r'(<hp:tr\b[^>]*>(?:(?!</hp:tr>).)*?{{site_parcel}}.*?</hp:tr>)', re.DOTALL)
+    match = pattern.search(xml)
+    if not match:
+        return xml
+
+    row_template = match.group(1)
+    new_rows = []
+
+    for s in site_details:
+        row_xml = row_template
+        area = s.get("areaByType", {})
+        
+        tokens = {
+            "site_location": s.get("location", ""),
+            "site_parcel": s.get("parcel", ""),
+            "site_category": s.get("landCategory", ""),
+            "area_imupum": _comma(area.get("임업용산지", 0)),
+            "area_gongik": _comma(area.get("공익용산지", 0)),
+            "area_junbojeon": _comma(area.get("준보전산지", 0)),
+            "area_total": _comma(s.get("areaTotal", 0)),
+            "temp_use_area": _comma(s.get("tempUseAreaSqm", 0)),
+        }
+        
+        for key, val in tokens.items():
+            row_xml = row_xml.replace("{{" + key + "}}", _xml_escape(val))
+            
+        # 레이아웃 깨짐 방지: <hp:linesegarray> 노드 제거
+        row_xml = re.sub(r'<hp:linesegarray\b[^>]*>.*?</hp:linesegarray>', '', row_xml, flags=re.DOTALL)
+        new_rows.append(row_xml)
+
+    new_rows_str = "\n".join(new_rows)
+    return xml.replace(row_template, new_rows_str)
 
 
 def fill_hwpx(payload: dict, template: Path = TEMPLATE) -> bytes:
@@ -106,9 +148,9 @@ def fill_hwpx(payload: dict, template: Path = TEMPLATE) -> bytes:
             data = src.read(item.filename)
             if item.filename == BODY_ENTRY:
                 xml = data.decode("utf-8")
+                xml = process_multi_parcel(xml, payload.get("siteDetails", []))
                 for key, val in tokens.items():
                     xml = xml.replace("{{" + key + "}}", _xml_escape(val))
-                # 다필지: siteDetails[1:] 가 있으면 여기서 표 행 복제 처리(TODO)
                 data = xml.encode("utf-8")
             dst.writestr(item, data)
     src.close()
@@ -146,7 +188,7 @@ if __name__ == "__main__":
                          "areaTotal": 46210, "tempUseAreaSqm": 46210}],
         "purpose": "산불 피해지 고사목 수확 및 산림 복구",
         "period": {"original": {"start": "2026-06-01", "end": "2026-08-31"}},
-        "declaredDate": "2026-06-14", "recipient": "시장·군수·구청장",
+        "declaredDate": date.today().isoformat(), "recipient": "시장·군수·구청장",
     }
     for k, v in build_token_map(sample).items():
         print(f"{{{{{k}}}}} -> {v}")

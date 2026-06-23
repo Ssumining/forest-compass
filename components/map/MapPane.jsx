@@ -64,11 +64,11 @@ function FormulaCard({ Ntree, Vunit, Srobot, theta, Y }) {
         <div className="flex items-center justify-center gap-2 text-[15px] text-wink whitespace-nowrap">
           <span className="font-bold text-wblue-600 italic">Y</span>
           <span className="text-wsub">=</span>
-          <span className="font-semibold" title="총 수목 본수">N<sub className="text-[10px] text-wsub">tree</sub></span>
+          <span className="font-semibold">N<sub className="text-[10px] text-wsub">tree</sub></span>
           <span className="text-wsub">×</span>
-          <span className="font-semibold" title="본당 단위 재적 (m³)">V<sub className="text-[10px] text-wsub">unit</sub></span>
+          <span className="font-semibold">V<sub className="text-[10px] text-wsub">unit</sub></span>
           <span className="text-wsub">×</span>
-          <span className="font-semibold" title="로봇 작업 효율 계수">S<sub className="text-[10px] text-wsub">robot</sub></span>
+          <span className="font-semibold">S<sub className="text-[10px] text-wsub">robot</sub></span>
           <span className="text-wsub">×</span>
           <span className="font-semibold italic">cos(θ<sub className="text-[10px] text-wsub">slope</sub>)</span>
         </div>
@@ -83,46 +83,119 @@ function FormulaCard({ Ntree, Vunit, Srobot, theta, Y }) {
           <span className="text-wblue-600 font-extrabold text-[14px] tabular-nums">{Y.toLocaleString()} m³</span>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-2 mt-2.5 text-[10.5px]">
-        {[['N','수목 본수','본'], ['V','단위 재적','m³/본'], ['S','로봇 효율','×'], ['θ','평균 경사','°']].map(([k, l, u]) => (
-          <div key={k} className="flex items-center gap-1.5 text-wsub">
-            <span className="grid h-4 w-4 place-items-center rounded bg-wbg text-wblue-600 font-mono font-bold text-[10px]">{k}</span>
-            <span className="truncate">{l}<span className="text-wsub/70"> ({u})</span></span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
 
-export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, robotOn, setRobotOn, terrain = makeMockTerrain(), onReset }) {
+// 주소 검색창
+function LocationSearch({ selectedLocation, onLocationSelect }) {
+  const [query, setQuery] = useState('');
+  const [state, setState] = useState('idle'); // idle | loading | error
+  const [errMsg, setErrMsg] = useState('');
+
+  async function handleSearch(e) {
+    e.preventDefault();
+    if (!query.trim()) return;
+    setState('loading');
+    setErrMsg('');
+    try {
+      const res = await fetch('/api/land-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: query.trim() }),
+      });
+      const data = await res.json();
+      if (data.error_coord || data.error_pnu || !res.ok) {
+        throw new Error(data.message ?? data.error_coord ?? '주소를 찾을 수 없습니다.');
+      }
+      onLocationSelect?.({
+        lat: data.y,
+        lng: data.x,
+        address: query.trim(),
+        jibun: data.jibun ?? '',
+        pnu: data.pnu ?? '',
+        landCategory: data.landCategory ?? '',
+        areaSqm: data.areaSqm ?? 0,
+        siteClassification: data.siteClassification ?? '',
+      });
+      setState('idle');
+    } catch (err) {
+      setErrMsg(String(err.message ?? err));
+      setState('error');
+      setTimeout(() => setState('idle'), 3000);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSearch} className="flex items-center gap-1.5 min-w-0 flex-1">
+      <div className={`flex items-center gap-1.5 flex-1 rounded-md border bg-white px-2.5 py-1 text-[12px] transition ${
+        state === 'error' ? 'border-wred/50' : 'border-wline focus-within:border-wblue-400'
+      }`}>
+        {state === 'loading'
+          ? <I.Loader size={13} className="shrink-0 text-wsub spin-slow" />
+          : <I.Search size={13} className="shrink-0 text-wsub" />}
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="소재지 + 지번 입력  예) 경기도 가평군 북면 이곡리 산1"
+          className="flex-1 bg-transparent text-wink placeholder-wsub/60 focus:outline-none min-w-0"
+        />
+        {errMsg && <span className="text-[10px] text-wred shrink-0">{errMsg}</span>}
+      </div>
+      <button type="submit" disabled={state === 'loading'}
+        className="shrink-0 rounded-md bg-wblue-500 hover:bg-wblue-600 text-white px-3 py-1.5 text-[11.5px] font-semibold disabled:opacity-60 transition">
+        조회
+      </button>
+    </form>
+  );
+}
+
+export default function MapPane({
+  radius, setRadius, slopeLimit, setSlopeLimit, robotOn, setRobotOn,
+  terrain = makeMockTerrain(),
+  terrainLoading = false,
+  selectedLocation, onLocationSelect,
+  onReset,
+}) {
   const [hover, setHover] = useState(null);
   const stats = useMemo(() => computeStats(radius, slopeLimit, robotOn, terrain), [radius, slopeLimit, robotOn, terrain]);
   const { avgSlope, maxSlopeInRadius, Ntree, Vunit, Srobot, overRatio, Y, carbonKRW, compliantProb, compliant } = stats;
 
+  const locationLabel = selectedLocation?.address
+    ? selectedLocation.address
+    : '위치 미선택';
+
   return (
     <div className="flex h-full flex-col bg-wbg/40">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-wline bg-white px-4 py-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="grid h-8 w-8 place-items-center rounded-lg bg-wblue-50 text-wblue-600 ring-1 ring-wblue-100">
-            <I.Map size={17} />
+      <div className="flex flex-col gap-2 border-b border-wline bg-white px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-wblue-50 text-wblue-600 ring-1 ring-wblue-100">
+              <I.Map size={17} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[13.5px] font-bold text-wink flex items-center gap-1.5">
+                경사도 컴플라이언스 지도
+                <span className="text-[10px] font-mono text-wsub bg-wbg px-1 rounded">GIS</span>
+              </div>
+              <div className="text-[10.5px] text-wsub truncate flex items-center gap-1">
+                <I.Pin size={10} />
+                {terrainLoading
+                  ? <span className="flex items-center gap-1 text-wblue-500"><I.Loader size={10} className="spin-slow" /> SRTM 경사도 분석 중…</span>
+                  : selectedLocation?.lat
+                    ? `${locationLabel} · ${terrain.source === 'srtm' ? '실측 경사도' : '추정 경사도'}`
+                    : '주소를 검색하거나 지도를 클릭해 위치를 선택하세요'}
+              </div>
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="text-[13.5px] font-bold text-wink flex items-center gap-1.5">
-              경사도 컴플라이언스 지도
-              <span className="text-[10px] font-mono text-wsub bg-wbg px-1 rounded">GIS</span>
-            </div>
-            <div className="text-[10.5px] text-wsub truncate flex items-center gap-1">
-              <I.Pin size={10} /> 전북 남원시 산내면 산 32-1 · 4.6 ha · DEM 5m
-            </div>
+          <div className="flex items-center gap-1">
+            <button className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink"><I.Layers size={15} /></button>
+            <button className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink"><I.Eye size={15} /></button>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink"><I.Layers size={15} /></button>
-          <button className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink"><I.Eye size={15} /></button>
-          <button className="h-8 w-8 grid place-items-center rounded-md text-wsub hover:bg-wbg hover:text-wink"><I.Settings size={15} /></button>
-        </div>
+        {/* 주소 검색창 */}
+        <LocationSearch selectedLocation={selectedLocation} onLocationSelect={onLocationSelect} />
       </div>
 
       <div className="flex-1 overflow-y-auto nice-scroll">
@@ -134,6 +207,8 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
               hover={hover} setHover={setHover}
               avgSlope={avgSlope} maxSlopeInRadius={maxSlopeInRadius}
               terrain={terrain}
+              selectedLocation={selectedLocation}
+              onLocationSelect={onLocationSelect}
             />
             <MapLegend />
             <div className="absolute right-3 top-3">
@@ -143,16 +218,41 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
               </div>
             </div>
             <div className="absolute inset-x-3 bottom-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-white/95 backdrop-blur border border-wline px-3 py-1.5 text-[10.5px] text-wsub shadow-card">
-              <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-wred" />고사목 {terrain.deadTrees?.length ?? 0}주</span>
-              <span className="flex items-center gap-1"><I.Mountain size={11} /> 평균 {avgSlope.toFixed(1)}°</span>
-              <span className="flex items-center gap-1"><I.Compass size={11} /> 최대 {maxSlopeInRadius.toFixed(1)}°</span>
-              <span className="ml-auto font-mono text-wink/70">EPSG:5179 · GRS80</span>
+              {selectedLocation?.lat ? (
+                <>
+                  {selectedLocation.landCategory && (
+                    <span className="flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-wblue-400" />
+                      지목: <b className="text-wink">{selectedLocation.landCategory}</b>
+                    </span>
+                  )}
+                  {selectedLocation.areaSqm > 0 && (
+                    <span className="flex items-center gap-1">
+                      <I.Layers size={11} />
+                      {selectedLocation.areaSqm.toLocaleString()}㎡
+                    </span>
+                  )}
+                  {selectedLocation.siteClassification && selectedLocation.siteClassification !== '미분류' && (
+                    <span className="flex items-center gap-1">
+                      <I.Trees size={11} />
+                      {selectedLocation.siteClassification}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1"><I.Mountain size={11} /> 평균 {avgSlope.toFixed(1)}°</span>
+                  <span className="flex items-center gap-1"><I.Compass size={11} /> 최대 {maxSlopeInRadius.toFixed(1)}°</span>
+                  <span className="ml-auto font-mono text-wink/70">
+                    {terrain.source === 'srtm' ? 'SRTM 30m' : 'EPSG:4326'} · WGS84
+                  </span>
+                </>
+              ) : (
+                <span className="text-wsub/60 italic">위치를 선택하면 분석이 시작됩니다</span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* 우회 설계 제안 (비적합 시) */}
-        {!compliant && (
+        {/* 우회 설계 제안 */}
+        {!compliant && selectedLocation?.lat && (
           <div className="mx-3 mt-3">
             <BypassCard
               radius={radius} slopeLimit={slopeLimit} robotOn={robotOn}
@@ -204,7 +304,6 @@ export default function MapPane({ radius, setRadius, slopeLimit, setSlopeLimit, 
                 <button
                   onClick={() => setRobotOn(v => !v)}
                   role="switch" aria-checked={robotOn}
-                  aria-label="AI 임업 로봇 투입 토글"
                   className={`relative h-5 w-9 rounded-full transition ${robotOn ? 'bg-wblue-500' : 'bg-wline'}`}
                 >
                   <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${robotOn ? 'right-0.5' : 'left-0.5'}`} />

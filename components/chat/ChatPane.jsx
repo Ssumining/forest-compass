@@ -3,13 +3,9 @@ import { useState, useEffect, useRef } from 'react';
 import { I } from '@/components/ui/Icons';
 import ThoughtBlock from './ThoughtBlock';
 import UserBubble from './UserBubble';
-import AgentResponse from './AgentResponse';
 import { useUsage, recordUse, deriveStatus, formatCooldown, DAILY_LIMIT } from '@/lib/usageLimit';
 import { streamAgent } from '@/lib/streamAgent';
-import { mockAgentReply } from '@/lib/agentReply';
 import CardRenderer from '@/components/chat/cards/CardRenderer';
-
-const PARCEL_ID = '전북 남원시 산내면 산 32-1';
 
 function StatusBadge() {
   return (
@@ -24,12 +20,6 @@ function StatusBadge() {
   );
 }
 
-const INITIAL_STEPS = [
-  { tool: 'search_forest_knowledge', tag: 'KNOW-RAG', icon: I.Search,   detail: '남원시 조례 및 산지관리법 §20, KFRI-KNOW 매뉴얼 14건 검토', state: 'idle', ms: 980,  output: '• 산림보호법 §9, 산지관리법 §20 · 매칭 11건\n• 「남원시 산림자원 조성·관리 조례」 §7 발견' },
-  { tool: 'apis.data.go.kr/forest/pinedamage', tag: '외부 API', icon: I.Camera,  detail: '무인기 다중분광 영상 84프레임 · 소나무 수피 SAM 마스킹 추론', state: 'idle', ms: 2140, output: '고사목 후보 41주 / 재선충 의심 7주 (conf. 0.914)' },
-  { tool: 'calculate_slope_grid', tag: 'GIS',      icon: I.Mountain, detail: '5m DEM × 12,840셀 · 평균경사도 + 위험구역 마스크 생성',         state: 'idle', ms: 610,  output: 'avg_slope = 18.7° · over25_ratio = 0.31\nharvest_polygon = 4.6ha' },
-];
-
 function nowLabel() {
   const d = new Date();
   const h = d.getHours();
@@ -37,14 +27,10 @@ function nowLabel() {
   return `${h < 12 ? '오전' : '오후'} ${((h + 11) % 12) + 1}:${m}`;
 }
 
-export default function ChatPane({ onShowMap, persona, onChangePersona }) {
-  const [steps, setSteps] = useState(INITIAL_STEPS);
-  const [thoughtExpanded, setThoughtExpanded] = useState(true);
-  const [showAgentMsg, setShowAgentMsg] = useState(false);
-  const [active, setActive] = useState(true);
+export default function ChatPane({ onShowMap, selectedLocation }) {
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState([]); // 후속 턴
-  const [expandedThoughts, setExpandedThoughts] = useState({}); // 후속 턴 thought 블록 접힘 상태(msg.id별)
+  const [messages, setMessages] = useState([]);
+  const [expandedThoughts, setExpandedThoughts] = useState({});
   const [pending, setPending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const scrollRef = useRef(null);
@@ -93,20 +79,17 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
 
     try {
       await streamAgent(
-        { query: text, personaId: persona?.id, parcelId: PARCEL_ID },
+        { query: text, parcelId: selectedLocation?.address ?? selectedLocation?.pnu ?? '' },
         { onThought: addThought, onAnswer: upsert, onCard: addCard },
       );
       if (agentId == null) throw new Error('empty stream');
-      // 스트림 종료 → 추론 루프 완료 표시(헤더가 "추론 루프 완료"로 전환, 미조작 시 자동 접힘)
       const id = agentId;
       setMessages(m => m.map(x => (x.id === id ? { ...x, thoughtActive: false } : x)));
-    } catch {
-      // 네트워크/스트림 실패 → 로컬 mock 폴백
-      const { answer, thoughts, cards } = mockAgentReply(text, persona?.id);
+    } catch (err) {
       setMessages(m => [...m, {
-        id: Date.now() + 1, role: 'agent', text: answer, cards,
-        thoughts: (thoughts ?? []).map(t => ({ ...t, state: 'done' })), thoughtActive: false,
-        time: nowLabel(),
+        id: Date.now() + 1, role: 'agent',
+        text: `응답을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.\n(${err?.message ?? '알 수 없는 오류'})`,
+        cards: [], thoughts: [], thoughtActive: false, time: nowLabel(),
       }]);
     } finally {
       setPending(false);
@@ -121,24 +104,9 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
   }
 
   useEffect(() => {
-    const timers = [
-      setTimeout(() => setSteps(s => s.map((x, i) => i === 0 ? { ...x, state: 'active' } : x)), 250),
-      setTimeout(() => setSteps(s => s.map((x, i) => i === 0 ? { ...x, state: 'done' } : i === 1 ? { ...x, state: 'active' } : x)), 1500),
-      setTimeout(() => setSteps(s => s.map((x, i) => i <= 1 ? { ...x, state: 'done' } : i === 2 ? { ...x, state: 'active' } : x)), 3000),
-      setTimeout(() => {
-        setSteps(s => s.map(x => ({ ...x, state: 'done' })));
-        setActive(false);
-        setShowAgentMsg(true);
-        setTimeout(() => setThoughtExpanded(false), 1200);
-      }, 4200),
-    ];
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
-  useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-  }, [showAgentMsg, thoughtExpanded, messages, pending]);
+  }, [messages, pending]);
 
   return (
     <div className="flex h-full flex-col bg-white lg:border-r border-wline">
@@ -162,60 +130,24 @@ export default function ChatPane({ onShowMap, persona, onChangePersona }) {
       {/* Workspace tabs */}
       <div className="flex items-center gap-1 px-3 pt-2.5 pb-1 border-b border-wline bg-wbg/40">
         <button className="flex items-center gap-1.5 rounded-md bg-white text-wink shadow-sm border border-wline px-2.5 py-1 text-[11.5px] font-semibold">
-          <I.MessageSquare size={12} /> 남원 산내면 #SLO-2024-31
+          <I.MessageSquare size={12} /> 새 대화
         </button>
         <button className="flex items-center gap-1.5 rounded-md text-wsub hover:bg-white px-2.5 py-1 text-[11.5px]">
           <I.Plus size={12} /> 새 세션
         </button>
-        {persona && (
-          <button
-            onClick={onChangePersona}
-            className="ml-auto flex items-center gap-1.5 rounded-md border border-wline bg-white px-2 py-1 text-[10.5px] text-wsub hover:text-wink hover:border-wink/30 transition"
-            title="페르소나 변경"
-          >
-            {(() => { const Ic = I[persona.icon] ?? I.Trees; return <Ic size={11} className="text-wblue-600" />; })()}
-            <span className="font-semibold text-wink">{persona.title}</span>
-            <I.ChevDown size={11} />
-          </button>
-        )}
       </div>
 
       {/* Scroll body */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto nice-scroll p-4 space-y-4">
-        <div className="flex items-center justify-center gap-2 text-[10.5px] text-wsub">
-          <span className="h-px flex-1 bg-wline" />
-          <span>오늘 · 14:11</span>
-          <span className="h-px flex-1 bg-wline" />
-        </div>
-
-        <UserBubble
-          time="오후 2:11"
-          text={
-            <>
-              <span className="block">남원 산불 피해지역 사유림(경사도 <strong>15도 부근</strong>)에서</span>
-              <span className="block">고사목을 수확하고 싶어. <strong>법적 검토</strong>랑 <strong>AI 로봇</strong>을 투입할 때</span>
-              <span className="block">수확 효율성 시뮬레이션 돌려줘.</span>
-            </>
-          }
-        />
-
-        <div className="flex gap-2.5">
-          <div className={`h-7 w-7 shrink-0 rounded-full grid place-items-center text-white shadow-sm transition ${active ? 'bg-wblue-500 pulse-soft' : 'bg-wink'}`}>
-            <I.Sparkles size={13} />
+        {messages.length === 0 && !pending && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-wsub">
+            <I.Sparkles size={28} className="text-wblue-300" />
+            <p className="text-[13px] font-semibold text-wink">무엇을 도와드릴까요?</p>
+            <p className="text-[11.5px]">아래 입력창에 질문을 입력하거나 빠른 질문을 선택하세요.</p>
           </div>
-          <div className="flex-1 min-w-0 space-y-2">
-            <ThoughtBlock
-              steps={steps}
-              expanded={thoughtExpanded}
-              onToggle={() => setThoughtExpanded(e => !e)}
-              active={active}
-            />
-          </div>
-        </div>
+        )}
 
-        {showAgentMsg && <AgentResponse onShowMap={onShowMap} />}
-
-        {/* 후속 대화 턴 */}
+        {/* 대화 턴 */}
         {messages.map(msg => msg.role === 'user' ? (
           <UserBubble key={msg.id} time={msg.time} text={msg.text} />
         ) : (
