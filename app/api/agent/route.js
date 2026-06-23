@@ -8,6 +8,8 @@
 //
 // 이벤트 형식은 apiContract.js AGENT_EVENTS 와 동일.
 
+import { resolveBackendUrl } from '@/lib/backendUrl';
+
 const SSE_HEADERS = {
   'Content-Type': 'text/event-stream; charset=utf-8',
   'Cache-Control': 'no-cache, no-transform',
@@ -22,13 +24,10 @@ export async function POST(request) {
     return Response.json({ error: 'INVALID_JSON' }, { status: 400 });
   }
 
-  const backend = process.env.AGENT_BACKEND_URL;
-  if (!backend) {
-    return Response.json({ error: 'AGENT_BACKEND_URL not configured' }, { status: 503 });
-  }
+  const backend = resolveBackendUrl('AGENT_BACKEND_URL');
 
   try {
-    const upstream = await fetch(`${backend.replace(/\/$/, '')}/agent`, {
+    const upstream = await fetch(`${backend}/agent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

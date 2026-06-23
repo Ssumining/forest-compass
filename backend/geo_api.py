@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import os
 import re
+import asyncio
 import httpx
 from typing import Optional
 
 VWORLD_BASE = "https://api.vworld.kr"
+
+# VWORLD 키는 등록한 도메인으로만 동작한다. geocoder(req/address)는 Referer 헤더로,
+# ned/* API는 domain 쿼리파라미터로 도메인을 검사한다.
+# 키를 'localhost'로 발급했다면 기본값 그대로, 배포 도메인으로 발급했다면 VWORLD_DOMAIN을 맞춰준다.
+VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN", "localhost")
 
 
 def _key() -> str:
@@ -21,6 +27,41 @@ def _key() -> str:
     if not k:
         raise RuntimeError("VWORLD_API_KEY 환경변수가 설정되지 않았습니다.")
     return k
+
+
+def _referer() -> str:
+    d = VWORLD_DOMAIN
+    if not d.startswith("http"):
+        d = ("http://" if d.startswith("localhost") else "https://") + d
+    return d.rstrip("/") + "/"
+
+
+async def _get_json(path: str, params: dict, retries: int = 3) -> dict:
+    """
+    VWORLD GET 호출. 등록 도메인 Referer 헤더를 붙이고,
+    일시적 502/503/504 는 백오프 재시도한다.
+    """
+    headers = {
+        "Referer": _referer(),
+        "User-Agent": "forest-compass/1.0",
+    }
+    last_exc: Optional[Exception] = None
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        for attempt in range(retries):
+            try:
+                r = await client.get(f"{VWORLD_BASE}{path}", params=params)
+                if r.status_code in (502, 503, 504):
+                    last_exc = httpx.HTTPStatusError(
+                        f"VWORLD {r.status_code}", request=r.request, response=r,
+                    )
+                    await asyncio.sleep(0.6 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                return r.json()
+            except (httpx.TransportError, httpx.HTTPStatusError) as e:
+                last_exc = e
+                await asyncio.sleep(0.6 * (attempt + 1))
+    raise last_exc or RuntimeError(f"VWORLD 호출 실패: {path}")
 
 
 # ── 지번 파싱 ─────────────────────────────────────────────────────────────
@@ -71,18 +112,12 @@ async def get_coord_and_code(address: str) -> dict:
         "type":     "parcel",   # 지번주소 우선
         "key":      _key(),
     }
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{VWORLD_BASE}/req/address", params=params)
-        r.raise_for_status()
-        body = r.json()
+    body = await _get_json("/req/address", params)
 
     if body.get("response", {}).get("status") != "OK":
         # fallback: road type
         params["type"] = "road"
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{VWORLD_BASE}/req/address", params=params)
-            r.raise_for_status()
-            body = r.json()
+        body = await _get_json("/req/address", params)
 
     if body.get("response", {}).get("status") != "OK":
         raise ValueError(f"주소 변환 실패: {addr_q!r}")
@@ -113,12 +148,9 @@ async def get_land_info(pnu: str) -> dict:
         "format":    "json",
         "numOfRows": 1,
         "pageNo":    1,
-        "domain":    "localhost",
+        "domain":    VWORLD_DOMAIN,
     }
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{VWORLD_BASE}/ned/data/ladfrlList", params=params)
-        r.raise_for_status()
-        body = r.json()
+    body = await _get_json("/ned/data/ladfrlList", params)
 
     # 응답 구조: body["ladfrlVOList"]["ladfrlVOList"] (중첩 동일명 키)
     outer = body.get("ladfrlVOList") or {}
@@ -145,12 +177,9 @@ async def get_land_regulation(pnu: str) -> dict:
         "pnu":    pnu,
         "key":    _key(),
         "format": "json",
-        "domain": "localhost",
+        "domain": VWORLD_DOMAIN,
     }
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{VWORLD_BASE}/ned/data/getLandUseAttr", params=params)
-        r.raise_for_status()
-        body = r.json()
+    body = await _get_json("/ned/data/getLandUseAttr", params)
 
     # 응답 구조: body["landUses"]["field"]
     regulations = (body.get("landUses") or body.get("landUseAttrList") or {}).get("field", [])

@@ -2,9 +2,10 @@
 // POST /api/land-info  { address: "경기도 가평군 북면 이곡리 산1" }
 // → backend POST /land/info
 
-const BACKEND = (process.env.BACKEND_URL ?? 'http://localhost:8000').replace(/\/$/, '');
+import { resolveBackendUrl } from '@/lib/backendUrl';
 
 export async function POST(request) {
+  const BACKEND = resolveBackendUrl('LAND_BACKEND_URL');
   try {
     const body = await request.json();
     const res = await fetch(`${BACKEND}/land/info`, {
